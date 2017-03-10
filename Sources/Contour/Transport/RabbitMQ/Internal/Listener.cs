@@ -1,40 +1,33 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-
-using Common.Logging;
-
-using Contour.Helpers;
-using Contour.Helpers.Scheduler;
-using Contour.Helpers.Timing;
-using Contour.Receiving;
-using Contour.Receiving.Consumers;
-using Contour.Validation;
-
-using global::RabbitMQ.Client.Events;
-
-namespace Contour.Transport.RabbitMQ.Internal
+﻿namespace Contour.Transport.RabbitMQ.Internal
 {
+    using System;
+    using System.Collections.Concurrent;
+    using System.Collections.Generic;
+    using System.Diagnostics;
+    using System.Diagnostics.CodeAnalysis;
+    using System.IO;
+    using System.Linq;
+    using System.Threading;
+    using System.Threading.Tasks;
+    using Common.Logging;
+    using Helpers;
+    using Helpers.Scheduler;
+    using Helpers.Timing;
+    using Receiving;
+    using Receiving.Consumers;
+    using Validation;
+    using global::RabbitMQ.Client.Events;
+
     /// <summary>
     /// Слушатель канала.
     /// </summary>
     internal class Listener : IDisposable
     {
         /// <summary>
-        /// Поставщик каналов.
-        /// </summary>
-        private readonly IChannelProvider channelProvider;
-
-        /// <summary>
         /// Обработчики сообщений.
         /// Каждому обработчику соответствует своя метка сообщения.
         /// </summary>
-        private readonly IDictionary<MessageLabel, ConsumingAction> consumers = new Dictionary<MessageLabel, ConsumingAction>();
+        private readonly IDictionary<MessageLabel, ConsumingAction> consumers = new ConcurrentDictionary<MessageLabel, ConsumingAction>();
 
         /// <summary>
         /// Порт канала, на который приходит сообщение.
@@ -44,7 +37,7 @@ namespace Contour.Transport.RabbitMQ.Internal
         /// <summary>
         /// Ожидания ответных сообщений на запрос.
         /// </summary>
-        private readonly IDictionary<string, Expectation> expectations = new Dictionary<string, Expectation>();
+        private readonly ConcurrentDictionary<string, Expectation> expectations = new ConcurrentDictionary<string, Expectation>();
 
         /// <summary>
         /// Хранилище заголовков входящего сообщения.
@@ -66,11 +59,14 @@ namespace Contour.Transport.RabbitMQ.Internal
         /// </summary>
         private readonly MessageValidatorRegistry validatorRegistry;
 
+        private readonly IBusContext busContext;
+        private readonly IRabbitConnection connection;
+
         /// <summary>
         /// Источник квитков отмены задач.
         /// </summary>
         private CancellationTokenSource cancellationTokenSource;
-
+        
         /// <summary>
         /// Признак: слушатель потребляет сообщения.
         /// </summary>
@@ -88,10 +84,13 @@ namespace Contour.Transport.RabbitMQ.Internal
         private IList<IWorker> workers;
 
         /// <summary>
-        /// Инициализирует новый экземпляр класса <see cref="Listener"/>.
+        /// Initializes a new instance of the <see cref="Listener"/> class. 
         /// </summary>
-        /// <param name="channelProvider">
-        /// Поставщик каналов.
+        /// <param name="busContext">
+        /// The bus Context.
+        /// </param>
+        /// <param name="connection">
+        /// Соединение с шиной сообщений
         /// </param>
         /// <param name="endpoint">
         /// Прослушиваемый порт.
@@ -102,27 +101,26 @@ namespace Contour.Transport.RabbitMQ.Internal
         /// <param name="validatorRegistry">
         /// Реестр механизмов проверки сообщений.
         /// </param>
-        public Listener(IChannelProvider channelProvider, ISubscriptionEndpoint endpoint, RabbitReceiverOptions receiverOptions, MessageValidatorRegistry validatorRegistry)
+        public Listener(IBusContext busContext, IRabbitConnection connection, ISubscriptionEndpoint endpoint, RabbitReceiverOptions receiverOptions, MessageValidatorRegistry validatorRegistry)
         {
+            this.busContext = busContext;
+            this.connection = connection;
             this.endpoint = endpoint;
-            this.channelProvider = channelProvider;
             this.validatorRegistry = validatorRegistry;
 
             this.ReceiverOptions = receiverOptions;
             this.ReceiverOptions.GetIncomingMessageHeaderStorage();
             this.messageHeaderStorage = this.ReceiverOptions.GetIncomingMessageHeaderStorage().Value;
-
-            // TODO: refactor
+            
             this.Failed += _ =>
                 {
-                    if (HasFailed)
+                    if (this.HasFailed)
                     {
                         return;
                     }
 
                     this.HasFailed = true;
-                    ((IBusAdvanced)channelProvider).Panic();
-                }; // restarting the whole bus
+                };
         }
 
         /// <summary>
@@ -152,13 +150,7 @@ namespace Contour.Transport.RabbitMQ.Internal
         /// <summary>
         /// Порт канала, который прослушивается на входящие сообщения.
         /// </summary>
-        public ISubscriptionEndpoint Endpoint
-        {
-            get
-            {
-                return this.endpoint;
-            }
-        }
+        public ISubscriptionEndpoint Endpoint => this.endpoint;
 
         /// <summary>
         /// Настройки получателя.
@@ -170,8 +162,8 @@ namespace Contour.Transport.RabbitMQ.Internal
         /// <summary>
         /// Создает входящее сообщение.
         /// </summary>
-        /// <param name="channel">
-        /// Канал, по которому получено сообщение.
+        /// <param name="deliveryChannel">
+        /// The delivery Channel.
         /// </param>
         /// <param name="args">
         /// Аргументы, с которыми получено сообщение.
@@ -179,9 +171,9 @@ namespace Contour.Transport.RabbitMQ.Internal
         /// <returns>
         /// Входящее сообщение.
         /// </returns>
-        public RabbitDelivery BuildDeliveryFrom(RabbitChannel channel, BasicDeliverEventArgs args)
+        public RabbitDelivery BuildDeliveryFrom(RabbitChannel deliveryChannel, BasicDeliverEventArgs args)
         {
-            return new RabbitDelivery(channel, args, this.ReceiverOptions.IsAcceptRequired());
+            return new RabbitDelivery(this.busContext, deliveryChannel, args, this.ReceiverOptions.IsAcceptRequired());
         }
 
         /// <summary>
@@ -210,34 +202,17 @@ namespace Contour.Transport.RabbitMQ.Internal
         public Task<IMessage> Expect(string correlationId, Type expectedResponseType, TimeSpan? timeout)
         {
             Expectation expectation;
-            long? timeoutTicket = null;
-
-            lock (this.locker)
+            if (this.expectations.TryGetValue(correlationId, out expectation))
             {
-                if (!this.expectations.TryGetValue(correlationId, out expectation))
-                {
-                    // TODO: refactor
-                    if (timeout.HasValue)
-                    {
-                        timeoutTicket = this.ticketTimer.Acquire(
-                            timeout.Value, 
-                            () =>
-                                {
-                                    Expectation ex;
-                                    if (this.expectations.TryGetValue(correlationId, out ex))
-                                    {
-                                        this.expectations.Remove(correlationId);
-                                        ex.Timeout();
-                                    }
-                                });
-                    }
-
-                    expectation = new Expectation(d => this.BuildResponse(d, expectedResponseType), timeoutTicket);
-                    this.expectations[correlationId] = expectation;
-                }
+                return expectation.Task;
             }
 
-            return expectation.Task;
+            // Используется блокировка, чтобы гарантировать что метод CreateExpectation будет вызван один раз, т.к. это не гарантируется реализацией метода GetOrAdd.
+            lock (this.locker)
+            {
+                expectation = this.expectations.GetOrAdd(correlationId, c => this.CreateExpectation(c, expectedResponseType, timeout));
+                return expectation.Task;
+            }
         }
 
         /// <summary>
@@ -439,9 +414,32 @@ namespace Contour.Transport.RabbitMQ.Internal
             }
         }
 
+        /// <summary>
+        /// Создаёт ожидание ответа на запрос.
+        /// </summary>
+        /// <param name="correlationId">Корреляционный идентификатор, с помощью которого определяется принадлежность ответа определенному запросу.</param>
+        /// <param name="expectedResponseType">Ожидаемый тип ответа.</param>
+        /// <param name="timeout">Время ожидания ответа.</param>
+        /// <returns>Ожидание ответа на запрос.</returns>
+        private Expectation CreateExpectation(string correlationId, Type expectedResponseType, TimeSpan? timeout)
+        {
+            long? timeoutTicket = null;
+            if (timeout.HasValue)
+            {
+                timeoutTicket = this.ticketTimer.Acquire(
+                    timeout.Value,
+                    () =>
+                    {
+                        this.OnResponseTimeout(correlationId);
+                    });
+            }
+
+            return new Expectation(d => this.BuildResponse(d, expectedResponseType), timeoutTicket);
+        }
+
         private void InternalConsume(CancellationToken cancellationToken)
         {
-            var channel = (RabbitChannel)this.channelProvider.OpenChannel();
+            var channel = this.connection.OpenChannel();
             channel.Failed += (ch, args) => this.Failed(this);
 
             if (this.ReceiverOptions.GetQoS().HasValue)
@@ -450,7 +448,7 @@ namespace Contour.Transport.RabbitMQ.Internal
                     this.ReceiverOptions.GetQoS().Value);
             }
 
-            CancellableQueueingConsumer consumer = channel.BuildCancellableConsumer(cancellationToken);
+            var consumer = channel.BuildCancellableConsumer(cancellationToken);
             channel.StartConsuming(this.endpoint.ListeningSource, this.ReceiverOptions.IsAcceptRequired(), consumer);
 
             consumer.ConsumerCancelled += (sender, args) =>
@@ -487,6 +485,19 @@ namespace Contour.Transport.RabbitMQ.Internal
         }
 
         /// <summary>
+        /// Обрабатывает превышение времени ожидания ответа.
+        /// </summary>
+        /// <param name="correlationId">Корреляционный идентификатор, с помощью которого определяется принадлежность ответа определенному запросу.</param>
+        private void OnResponseTimeout(string correlationId)
+        {
+            Expectation expectation;
+            if (this.expectations.TryRemove(correlationId, out expectation))
+            {
+                expectation.Timeout();
+            }
+        }
+
+        /// <summary>
         /// Обработчик события о ненайденном обработчике сообщений.
         /// </summary>
         /// <param name="delivery">
@@ -518,24 +529,19 @@ namespace Contour.Transport.RabbitMQ.Internal
 
             string correlationId = delivery.CorrelationId;
 
-            lock (this.locker)
+            Expectation expectation;
+            if (!this.expectations.TryRemove(correlationId, out expectation))
             {
-                if (this.expectations.ContainsKey(correlationId))
-                {
-                    Expectation e = this.expectations[correlationId];
-
-                    if (e.TimeoutTicket.HasValue)
-                    {
-                        this.ticketTimer.Cancel(e.TimeoutTicket.Value);
-                    }
-
-                    this.expectations.Remove(correlationId);
-                    e.Complete(delivery);
-                    return true;
-                }
+                return false;
             }
 
-            return false;
+            if (expectation.TimeoutTicket.HasValue)
+            {
+                this.ticketTimer.Cancel(expectation.TimeoutTicket.Value);
+            }
+
+            expectation.Complete(delivery);
+            return true;
         }
 
         /// <summary>

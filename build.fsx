@@ -49,11 +49,7 @@ Target "AssemblyInfo" (fun _ ->
           Attribute.Version release.AssemblyVersion
           Attribute.FileVersion release.AssemblyVersion
           Attribute.InformationalVersion release.NugetVersion
-          Attribute.Copyright license
-          Attribute.InternalsVisibleTo "DynamicProxyGenAssembly2"
-          Attribute.InternalsVisibleTo "Contour.Common.Tests"
-          Attribute.InternalsVisibleTo "Contour.RabbitMq.Tests"
-          Attribute.InternalsVisibleTo "Contour.Configurator.Tests" ]
+          Attribute.Copyright license ]
     CreateCSharpAssemblyInfo <| "./Sources/" @@ project @@ "/Properties/AssemblyInfo.cs" <| info
 )
 
@@ -105,7 +101,8 @@ Target "Deploy" (fun () ->
                   "FluentValidation", GetPackageVersion "packages" "FluentValidation";
                   "Newtonsoft.Json", GetPackageVersion "packages" "Newtonsoft.Json" ]
             Files =
-                [ (@"..\" +  buildDir + "Contour.dll", Some "lib/net40", None) ]})
+                [ (@"..\" + buildDir + "Contour.dll", Some "lib/net40", None);
+                  (@"..\" + buildDir + "Contour.pdb", Some "lib/net40", None) ]})
         <| (nugetDir + project + ".nuspec")
 )
 

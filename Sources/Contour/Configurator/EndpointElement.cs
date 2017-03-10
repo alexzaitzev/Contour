@@ -1,4 +1,6 @@
-﻿namespace Contour.Configurator
+﻿using System;
+
+namespace Contour.Configurator
 {
     using System.Configuration;
 
@@ -60,6 +62,13 @@
             }
         }
 
+        [ConfigurationProperty("reuseConnection", DefaultValue = true, IsRequired = false)]
+        public bool? ReuseConnection
+        {
+            get { return (bool?)this["reuseConnection"]; }
+            set { this["reuseConnection"] = value; }
+        }
+
         /// <summary>
         /// Количество одновременных обработчиков сообщений из очередей конечной точки, включая очереди ответных сообщений.
         /// </summary>
@@ -74,6 +83,27 @@
             set
             {
                 this["parallelismLevel"] = value;
+            }
+        }
+
+        /// <summary>
+        /// Время хранения сообщений в Fault очереди.
+        /// </summary>
+        [ConfigurationProperty("faultQueueTtl", IsRequired = false)]
+        public TimeSpan? FaultQueueTtl
+        {
+            get
+            {
+                return (TimeSpan?)this["faultQueueTtl"];
+            }
+        }
+
+
+        [ConfigurationProperty("faultQueueLimit", IsRequired = false)]
+        public int? FaultQueueLimit {
+            get
+            {
+                return (int?)this["faultQueueLimit"];
             }
         }
 
@@ -141,5 +171,6 @@
                 return (ValidatorCollection)base["validators"];
             }
         }
+
     }
 }

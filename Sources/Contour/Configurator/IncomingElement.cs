@@ -7,8 +7,6 @@
     /// </summary>
     internal class IncomingElement : MessageElement
     {
-        #region Public Properties
-
         /// <summary>
         /// Gets the lifestyle.
         /// </summary>
@@ -69,6 +67,37 @@
             }
         }
 
-        #endregion
+        /// <summary>
+        /// Gets QoS for incoming messages listener
+        /// </summary>
+        [ConfigurationProperty("qos")]
+        public QosElement Qos
+        {
+            get
+            {
+                return (QosElement)base["qos"];
+            }
+        }
+
+        [ConfigurationProperty("parallelismLevel", IsRequired = false)]
+        public uint? ParallelismLevel
+        {
+            get
+            {
+                return (uint?) base["parallelismLevel"];
+            }
+        }
+
+        [ConfigurationProperty("connectionString", IsRequired = false)]
+        public string ConnectionString
+        {
+            get { return (string) base["connectionString"]; }
+        }
+
+        [ConfigurationProperty("reuseConnection", IsRequired = false)]
+        public bool? ReuseConnection
+        {
+            get { return (bool?) base["reuseConnection"]; }
+        }
     }
 }

@@ -8,19 +8,21 @@ namespace Contour.Receiving
     /// <summary>
     /// Настройки получателя.
     /// </summary>
-    public class ReceiverOptions : BusOptions
+    public class ReceiverOptions : EndpointOptions
     {
         /// <summary>
-        /// Инициализирует новый экземпляр класса <see cref="ReceiverOptions"/>.
+        /// Initializes a new instance of the <see cref="ReceiverOptions"/> class. 
         /// </summary>
         public ReceiverOptions()
         {
         }
 
         /// <summary>
-        /// Инициализирует новый экземпляр класса <see cref="ReceiverOptions"/>.
+        /// Initializes a new instance of the <see cref="ReceiverOptions"/> class. 
         /// </summary>
-        /// <param name="parent">Базовые настройки.</param>
+        /// <param name="parent">
+        /// Базовые настройки.
+        /// </param>
         public ReceiverOptions(BusOptions parent)
             : base(parent)
         {
@@ -45,6 +47,16 @@ namespace Contour.Receiving
         /// Количество одновременных обработчиков сообщений.
         /// </summary>
         public Maybe<uint> ParallelismLevel { protected get; set; }
+
+        /// <summary>
+        /// Длительность хранения сообщений в Fault очереди.
+        /// </summary>
+        public Maybe<TimeSpan> FaultQueueTtl { protected get; set; }
+
+        /// <summary>
+        /// Максимальное количество сообщений в Fault очереди.
+        /// </summary>
+        public Maybe<int> FaultQueueLimit { protected get; set; }
 
         /// <summary>
         /// Обработчик сообщений, для которых не найден потребитель.
@@ -75,7 +87,7 @@ namespace Contour.Receiving
         /// </returns>
         public Maybe<Func<ISubscriptionEndpointBuilder, ISubscriptionEndpoint>> GetEndpointBuilder()
         {
-            return this.Pick(o => ((ReceiverOptions)o).EndpointBuilder);
+            return this.Pick<ReceiverOptions, Func<ISubscriptionEndpointBuilder, ISubscriptionEndpoint>>((o) => o.EndpointBuilder);
         }
 
         /// <summary>
@@ -86,7 +98,7 @@ namespace Contour.Receiving
         /// </returns>
         public Maybe<IFailedDeliveryStrategy> GetFailedDeliveryStrategy()
         {
-            return this.Pick(o => ((ReceiverOptions)o).FailedDeliveryStrategy);
+            return this.Pick<ReceiverOptions, IFailedDeliveryStrategy>((o) => o.FailedDeliveryStrategy);
         }
 
         /// <summary>
@@ -97,7 +109,7 @@ namespace Contour.Receiving
         /// </returns>
         public Maybe<uint> GetParallelismLevel()
         {
-            return this.Pick(o => ((ReceiverOptions)o).ParallelismLevel);
+            return this.Pick<ReceiverOptions, uint>((o) => o.ParallelismLevel);
         }
 
         /// <summary>
@@ -108,7 +120,7 @@ namespace Contour.Receiving
         /// </returns>
         public Maybe<IUnhandledDeliveryStrategy> GetUnhandledDeliveryStrategy()
         {
-            return this.Pick(o => ((ReceiverOptions)o).UnhandledDeliveryStrategy);
+            return this.Pick<ReceiverOptions, IUnhandledDeliveryStrategy>((o) => o.UnhandledDeliveryStrategy);
         }
 
         /// <summary>
@@ -119,7 +131,7 @@ namespace Contour.Receiving
         /// </returns>
         public Maybe<bool> IsAcceptRequired()
         {
-            return this.Pick(o => ((ReceiverOptions)o).AcceptIsRequired);
+            return this.Pick<ReceiverOptions, bool>((o) => o.AcceptIsRequired);
         }
 
         /// <summary>
@@ -128,7 +140,29 @@ namespace Contour.Receiving
         /// <returns>Хранилище заголовков входящего сообщения.</returns>
         public Maybe<IIncomingMessageHeaderStorage> GetIncomingMessageHeaderStorage()
         {
-            return this.Pick(o => ((ReceiverOptions)o).IncomingMessageHeaderStorage);
+            return this.Pick<ReceiverOptions, IIncomingMessageHeaderStorage>((o) => o.IncomingMessageHeaderStorage);
+        }
+
+        /// <summary>
+        /// Возвращает длительность хранения сообщений в Fault очереди.
+        /// </summary>
+        /// <returns>
+        /// Возвращает длительность хранения сообщений в Fault очереди.
+        /// </returns>
+        public Maybe<TimeSpan> GetFaultQueueTtl()
+        {
+            return this.Pick<ReceiverOptions, TimeSpan>((o) => o.FaultQueueTtl);
+        }
+
+        /// <summary>
+        /// Возвращает максимальное количество сообщений в Fault очереди.
+        /// </summary>
+        /// <returns>
+        /// Возвращает максимальное количество сообщений в Fault очереди.
+        /// </returns>
+        public Maybe<int> GetFaultQueueLimit()
+        {
+            return this.Pick<ReceiverOptions, int>((o) => o.FaultQueueLimit);
         }
     }
 }

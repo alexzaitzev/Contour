@@ -26,7 +26,7 @@ namespace Contour.Transport.RabbitMQ
         /// <param name="prefetchCount">Количество сообщений получаемых из шины за одно обращение, т.е. размер порции данных.</param>
         /// <param name="prefetchSize">Количество сообщений, которые должен обработать получатель, прежде чем получит новую порцию данных.</param>
         /// <returns>Конфигурация экземпляра шины сообщений.</returns>
-        public static IBusConfigurator SetDefaultQoS(this IBusConfigurator busConfigurator, ushort prefetchCount, uint prefetchSize = 0)
+        public static IBusConfigurator SetDefaultQoS(this IBusConfigurator busConfigurator, ushort prefetchCount, uint prefetchSize = 0) 
         {
             // TODO: beautify
             ((RabbitReceiverOptions)((BusConfiguration)busConfigurator).ReceiverDefaults).QoS = new QoSParams(prefetchCount, prefetchSize);
@@ -61,40 +61,51 @@ namespace Contour.Transport.RabbitMQ
 
             c.BuildBusUsing(bc => new RabbitBus(c));
 
-            c.SenderDefaults = new SenderOptions
-                                   {
-                                       ConfirmationIsRequired = false, 
-                                       Persistently = false, 
-                                       RequestTimeout = default(TimeSpan?), 
-                                       Ttl = default(TimeSpan?), 
-                                       RouteResolverBuilder = RabbitBusDefaults.RouteResolverBuilder,
-                                       IncomingMessageHeaderStorage = messageHeaderStorage
-                                   };
+            c.SenderDefaults = new RabbitSenderOptions(c.EndpointOptions)
+            {
+                ConfirmationIsRequired = false,
+                Persistently = false,
+                RequestTimeout = default(TimeSpan?),
+                Ttl = default(TimeSpan?),
+                RouteResolverBuilder = RabbitBusDefaults.RouteResolverBuilder,
+                IncomingMessageHeaderStorage = messageHeaderStorage,
+                ReuseConnection = true
+            };
 
-            c.ReceiverDefaults = new RabbitReceiverOptions
-                                     {
-                                         AcceptIsRequired = false, 
-                                         ParallelismLevel = 1, 
-                                         EndpointBuilder = RabbitBusDefaults.SubscriptionEndpointBuilder,
-                                         QoS = new QoSParams(50, 0),
-                                         IncomingMessageHeaderStorage = messageHeaderStorage
-                                     };
+            c.ReceiverDefaults = new RabbitReceiverOptions(c.EndpointOptions)
+            {
+                AcceptIsRequired = false,
+                ParallelismLevel = 1,
+                EndpointBuilder = RabbitBusDefaults.SubscriptionEndpointBuilder,
+                QoS = new QoSParams(50, 0),
+                IncomingMessageHeaderStorage = messageHeaderStorage,
+                ReuseConnection = true
+            };
 
             c.UseMessageLabelHandler(new DefaultRabbitMessageLabelHandler());
-
+           
             // TODO: extract, combine routing and handler definition
-            Func<IRouteResolverBuilder, IRouteResolver> faultRouteResolverBuilder = b =>
+            Func <IRouteResolverBuilder, IRouteResolver> faultRouteResolverBuilder = b =>
                 {
+                    TimeSpan messageTtl = c.ReceiverDefaults.GetFaultQueueTtl().HasValue
+                                              ? c.ReceiverDefaults.GetFaultQueueTtl().Value
+                                              : TimeSpan.FromDays(FaultMessageTtlDays);
+
                     string name = b.Endpoint.Address + ".Fault";
-                    Exchange e = b.Topology.Declare(
-                        Exchange.Named(name).Durable.Topic);
-                    Queue q = b.Topology.Declare(Queue.Named(name).Durable.WithTtl(TimeSpan.FromDays(FaultMessageTtlDays)));
+                    Exchange e = b.Topology.Declare(Exchange.Named(name).Durable.Topic);
+                    QueueBuilder builder = Queue.Named(name).Durable.WithTtl(messageTtl);
+
+                    if (c.ReceiverDefaults.GetFaultQueueLimit().HasValue)
+                    {
+                        builder = builder.WithLimit(c.ReceiverDefaults.GetFaultQueueLimit().Value);
+                    }
+                    Queue q = b.Topology.Declare(builder);
                     b.Topology.Bind(e, q);
                     return e;
                 };
 
-            c.Route("document.Contour.unhandled").Persistently().ConfiguredWith(faultRouteResolverBuilder);
-            c.Route("document.Contour.failed").Persistently().ConfiguredWith(faultRouteResolverBuilder);
+            c.Route("document.Contour.unhandled").Persistently().ConfiguredWith(faultRouteResolverBuilder).ReuseConnection();
+            c.Route("document.Contour.failed").Persistently().ConfiguredWith(faultRouteResolverBuilder).ReuseConnection();
 
             c.OnUnhandled(
                 d =>

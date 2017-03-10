@@ -220,6 +220,14 @@
         void SetConnectionString(string connectionString);
 
         /// <summary>
+        /// Sets connection reuse.
+        /// </summary>
+        /// <param name="reuse">
+        /// Connection reuse flag.
+        /// </param>
+        void ReuseConnection(bool reuse = true);
+
+        /// <summary>
         /// Устанавливает строку соединения по имени из конфигурационного файла.
         /// </summary>
         /// <param name="connectionStringName">
@@ -242,6 +250,18 @@
         /// Уровень параллелизма.
         /// </param>
         void UseParallelismLevel(uint parallelismLevel);
+
+        /// <summary>
+        /// The fault queue message TTL.
+        /// </summary>
+        /// <param name="messageTtl">the fault queue message TTL.</param>
+        void UseFaultQueueTtl(TimeSpan messageTtl);
+
+        /// <summary>
+        /// The fault message queue length limit.
+        /// </summary>
+        /// <param name="queueLimit">The fault message queue length limit.</param>
+        void UseFaultQueueLimit(int queueLimit);
 
         /// <summary>
         /// Устанаваливает конвертер тела сообщений.

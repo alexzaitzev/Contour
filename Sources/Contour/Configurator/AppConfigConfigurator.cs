@@ -134,6 +134,11 @@ namespace Contour.Configurator
 
             cfg.SetConnectionString(endpointConfig.ConnectionString);
 
+            if (endpointConfig.ReuseConnection.HasValue)
+            {
+                cfg.ReuseConnection(endpointConfig.ReuseConnection.Value);
+            }
+
             if (!string.IsNullOrWhiteSpace(endpointConfig.LifecycleHandler))
             {
                 cfg.HandleLifecycleWith(this.ResolveLifecycleHandler(endpointConfig.LifecycleHandler));
@@ -147,6 +152,16 @@ namespace Contour.Configurator
             if (endpointConfig.ParallelismLevel.HasValue)
             {
                 cfg.UseParallelismLevel(endpointConfig.ParallelismLevel.Value);
+            }
+
+            if (endpointConfig.FaultQueueTtl.HasValue)
+            {
+                cfg.UseFaultQueueTtl(endpointConfig.FaultQueueTtl.Value);
+            }
+
+            if (endpointConfig.FaultQueueLimit.HasValue)
+            {
+                cfg.UseFaultQueueLimit(endpointConfig.FaultQueueLimit.Value);
             }
 
             if (endpointConfig.Dynamic != null)
@@ -190,64 +205,140 @@ namespace Contour.Configurator
                 }
             }
 
-            foreach (OutgoingElement message in endpointConfig.Outgoing)
+            foreach (OutgoingElement outgoingElement in endpointConfig.Outgoing)
             {
-                ISenderConfigurator senderCfg = cfg.Route(message.Label).
-                    WithAlias(message.Key);
+                ISenderConfigurator configurator = cfg.Route(outgoingElement.Label).
+                    WithAlias(outgoingElement.Key);
 
-                if (message.Confirm)
+                if (outgoingElement.Confirm)
                 {
-                    senderCfg.WithConfirmation();
+                    configurator.WithConfirmation();
                 }
 
-                if (message.Persist)
+                if (outgoingElement.Persist)
                 {
-                    senderCfg.Persistently();
+                    configurator.Persistently();
                 }
 
-                if (message.Ttl.HasValue)
+                if (outgoingElement.Ttl.HasValue)
                 {
-                    senderCfg.WithTtl(message.Ttl.Value);
+                    configurator.WithTtl(outgoingElement.Ttl.Value);
                 }
 
-                if (message.CallbackEndpoint.Default)
+                if (outgoingElement.CallbackEndpoint.Default)
                 {
-                    senderCfg.WithDefaultCallbackEndpoint();
+                    configurator.WithDefaultCallbackEndpoint();
                 }
 
-                if (message.Timeout.HasValue)
+                if (outgoingElement.Timeout.HasValue)
                 {
-                    senderCfg.WithRequestTimeout(message.Timeout);
+                    configurator.WithRequestTimeout(outgoingElement.Timeout);
+                }
+
+                // Connection string
+                var connectionString = endpointConfig.ConnectionString;
+                if (!string.IsNullOrEmpty(outgoingElement.ConnectionString))
+                {
+                    connectionString = outgoingElement.ConnectionString;
+                }
+
+                configurator.WithConnectionString(connectionString);
+
+                // Reuse connection
+                if (outgoingElement.ReuseConnection.HasValue)
+                {
+                    configurator.ReuseConnection(outgoingElement.ReuseConnection.Value);
                 }
             }
 
-            foreach (IncomingElement message in endpointConfig.Incoming)
+            foreach (IncomingElement incomingElement in endpointConfig.Incoming)
             {
-                IReceiverConfigurator receiver = cfg.On(message.Label).
-                    WithAlias(message.Key);
+                var configurator = cfg.On(incomingElement.Label).WithAlias(incomingElement.Key);
 
-                if (message.RequiresAccept)
+                uint size = 0;
+                ushort count = 50;
+
+                // This should be the default values provided by RabbitMQ configurator (BusConsumerConfigurationEx);
+                var qos = configurator.GetQoS();
+                if (qos.HasValue)
                 {
-                    receiver.RequiresAccept();
+                    size = qos.Value.PrefetchSize;
+                    count = qos.Value.PrefetchCount;
+                }
+
+                // Prefetch size
+                if (endpointConfig.Qos.PrefetchSize.HasValue)
+                {
+                    size = endpointConfig.Qos.PrefetchSize.Value;
+                }
+
+                if (incomingElement.Qos.PrefetchSize.HasValue)
+                {
+                    size = incomingElement.Qos.PrefetchSize.Value;
+                }
+
+                // Prefetch count
+                if (endpointConfig.Qos.PrefetchCount.HasValue)
+                {
+                    count = endpointConfig.Qos.PrefetchCount.Value;
+                }
+
+                if (incomingElement.Qos.PrefetchCount.HasValue)
+                {
+                    count = incomingElement.Qos.PrefetchCount.Value;
+                }
+
+                configurator.WithQoS(new QoSParams(count, size));
+
+                // Parallelism level
+                if (endpointConfig.ParallelismLevel.HasValue)
+                {
+                    configurator.WithParallelismLevel(endpointConfig.ParallelismLevel.Value);
+                }
+
+                if (incomingElement.ParallelismLevel.HasValue)
+                {
+                    configurator.WithParallelismLevel(incomingElement.ParallelismLevel.Value);
+                }
+                
+                // Accept
+                if (incomingElement.RequiresAccept)
+                {
+                    configurator.RequiresAccept();
+                }
+
+                // Connection string
+                var connectionString = endpointConfig.ConnectionString;
+                if (!string.IsNullOrEmpty(incomingElement.ConnectionString))
+                {
+                    connectionString = incomingElement.ConnectionString;
+                }
+
+                configurator.WithConnectionString(connectionString);
+
+                // Reuse connection
+                if (incomingElement.ReuseConnection.HasValue)
+                {
+                    configurator.ReuseConnection(incomingElement.ReuseConnection.Value);
                 }
 
                 Type messageType = typeof(ExpandoObject);
-                if (!string.IsNullOrWhiteSpace(message.Type))
+                if (!string.IsNullOrWhiteSpace(incomingElement.Type))
                 {
-                    messageType = ResolveType(message.Type);
+                    messageType = ResolveType(incomingElement.Type);
                 }
 
-                var consumerFactory = this.BuildConsumerFactory(message.React, messageType);
+                var consumerFactory = this.BuildConsumerFactory(incomingElement.React, messageType);
 
-                object consumer = BuildConsumer(consumerFactory, messageType, message.Lifestyle);
+                object consumer = BuildConsumer(consumerFactory, messageType, incomingElement.Lifestyle);
 
-                RegisterConsumer(receiver, messageType, consumer);
+                RegisterConsumer(configurator, messageType, consumer);
 
-                if (!string.IsNullOrWhiteSpace(message.Validate))
+                if (!string.IsNullOrWhiteSpace(incomingElement.Validate))
                 {
-                    IMessageValidator validator = this.ResolveValidator(message.Validate, messageType);
+                    IMessageValidator validator = this.ResolveValidator(incomingElement.Validate, messageType);
 
-                    receiver.WhenVerifiedBy(validator);
+                    configurator.WhenVerifiedBy(validator);
                 }
             }
 
